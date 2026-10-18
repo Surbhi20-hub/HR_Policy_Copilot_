@@ -1,5 +1,6 @@
 """Central config: every model is created here so the provider is switchable via .env."""
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
@@ -7,7 +8,12 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 
 load_dotenv()
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")  # keep Chroma quiet and private
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+# Folder that stores the Chroma index (ignored by Git). Can be changed in .env.
+CHROMA_DIR = ROOT_DIR / os.getenv("CHROMA_DIR", "chroma_db")
+COLLECTION_NAME = "hr_policies"
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 
 
