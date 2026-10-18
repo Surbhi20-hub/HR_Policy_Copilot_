@@ -1,0 +1,6 @@
+{
+  "E1001": {"name": "Asha Patil", "type": "full_time", "PL": 12.5, "CL": 5, "SL": 9, "on_probation": false},
+  "E1002": {"name": "Rohan Mehta", "type": "probation", "PL": 4.5, "CL": 6, "SL": 10, "on_probation": true},
+  "E1003": {"name": "Neha Kulkarni", "type": "full_time", "PL": 28, "CL": 1, "SL": 14, "on_probation": false},
+  "I2001": {"name": "Karan Shah", "type": "intern", "intern_leave": 2, "on_probation": false}
+}
