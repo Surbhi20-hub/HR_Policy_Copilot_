@@ -48,6 +48,12 @@ was not found or is unclear.
 8. Write the answer in 1 to 4 short sentences of plain language and repeat the exact numbers \
 from the policy. Mention hr@company.com only when escalate_to_hr is true."""
 
+# Added to the system prompt when the first answer failed the grounding check.
+STRICT_RULES = """
+9. STRICT MODE: an earlier answer contained claims that the context does not support. Now \
+state ONLY what a chunk says, almost word-for-word. Leave out every detail you cannot quote. \
+If you cannot support an answer, follow rule 5."""
+
 HUMAN_PROMPT = """<context>
 {context}
 </context>
@@ -70,10 +76,14 @@ def format_context(docs: list[Document]) -> str:
     return "\n\n".join(blocks)
 
 
-def build_rag_chain() -> Runnable:
-    """Build the chain. Input: a question (text). Output: dict with question, docs, answer."""
+def build_rag_chain(extra_rules: str = "") -> Runnable:
+    """Build the chain. Input: a question (text). Output: dict with question, docs, answer.
+
+    extra_rules is added after the normal rules (the graph uses it for strict mode and for
+    sensitive questions). It must not contain curly braces.
+    """
     prompt = ChatPromptTemplate.from_messages(
-        [("system", SYSTEM_PROMPT), ("human", HUMAN_PROMPT)]
+        [("system", SYSTEM_PROMPT + extra_rules), ("human", HUMAN_PROMPT)]
     )
     llm = get_llm().with_structured_output(PolicyAnswer).with_retry(stop_after_attempt=3)
 

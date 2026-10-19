@@ -43,3 +43,22 @@ class PolicyAnswer(BaseModel):
         if not self.citations:
             self.escalate_to_hr = True
         return self
+
+
+class RouteDecision(BaseModel):
+    """The router's choice: which path should this question take?"""
+
+    route: Literal["policy", "personal", "sensitive", "out_of_scope"] = Field(
+        description="policy = HR rule question, personal = the employee's own data, "
+        "sensitive = harassment/grievance/medical/emotional, out_of_scope = anything else"
+    )
+    reason: str = Field(description="One short sentence: why this route")
+
+
+class GroundingResult(BaseModel):
+    """The checker's verdict: is every claim in the answer backed by the policy text?"""
+
+    grounded: bool = Field(description="True only if every claim is supported by the context")
+    unsupported_claims: list[str] = Field(
+        description="Claims that the context does not support. Empty list if grounded."
+    )
