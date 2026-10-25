@@ -62,3 +62,11 @@ class GroundingResult(BaseModel):
     unsupported_claims: list[str] = Field(
         description="Claims that the context does not support. Empty list if grounded."
     )
+
+
+class RewrittenQuestion(BaseModel):
+    """A follow-up turned into a complete question that makes sense on its own."""
+
+    standalone_question: str = Field(
+        description="One complete question, using the earlier chat to fill in what is missing"
+    )
