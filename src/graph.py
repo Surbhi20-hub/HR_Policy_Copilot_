@@ -95,10 +95,11 @@ Rules:
 (the topic, the subject, the policy). Example: earlier "What is the work from home rule?" and \
 latest "and for interns?" become "What is the work from home rule for interns?".
 2. When the latest message names a different group of people (for example interns, probation \
-employees or managers), keep the general topic of the earlier question but drop narrow details \
-such as the leave type, unless the latest message repeats them. Example: earlier "How many casual \
-leaves do I get in a year?" and latest "what about interns?" become "How many days of leave do \
-interns get?".
+employees or managers), ask about the BROAD topic, not the narrow type. Drop details such as the \
+leave type (casual, sick, privilege), because the policy may treat that group in a different way. \
+Right: earlier "How many casual leaves do I get in a year?" and latest "what about interns?" \
+become "How many days of leave do interns get?". Wrong: "How many days of casual leave do interns \
+get?" (it keeps the narrow type).
 3. Do NOT answer the question. Do NOT add facts, numbers or names that are not in the chat.
 4. If the latest message is already complete and clear, return it unchanged.
 5. Keep the employee's meaning. Return one short question.
