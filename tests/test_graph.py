@@ -40,16 +40,28 @@ def fakes(monkeypatch):
         route = "policy"
         verdicts = [True]  # one grounded verdict per check (the last one repeats)
         chain_calls: list[str] = []
+        chain_questions: list[str] = []
+        route_histories: list[str] = []
+        rewrite_calls: list[tuple[str, str]] = []
         check_calls = 0
 
     f = Fakes()
     f.chain_calls = []
+    f.chain_questions = []
+    f.route_histories = []
+    f.rewrite_calls = []
 
-    def fake_route(question: str) -> RouteDecision:
+    def fake_route(question: str, history: str = "") -> RouteDecision:
+        f.route_histories.append(history)
         return RouteDecision(route=f.route, reason="test")
+
+    def fake_rewrite(question: str, history: str) -> str:
+        f.rewrite_calls.append((question, history))
+        return "REWRITTEN: " + question
 
     def fake_chain(kind: str, question: str) -> dict:
         f.chain_calls.append(kind)
+        f.chain_questions.append(question)
         return make_result(f"answer from {kind} chain")
 
     def fake_check(question: str, answer: str, context: str) -> GroundingResult:
@@ -58,6 +70,7 @@ def fakes(monkeypatch):
         return GroundingResult(grounded=ok, unsupported_claims=[] if ok else ["made up"])
 
     monkeypatch.setattr(graph, "_decide_route", fake_route)
+    monkeypatch.setattr(graph, "_rewrite", fake_rewrite)
     monkeypatch.setattr(graph, "_run_chain", fake_chain)
     monkeypatch.setattr(graph, "_check_grounding", fake_check)
     return f
@@ -135,7 +148,8 @@ def test_sensitive_always_escalates(fakes) -> None:
 
 def test_latency_is_reported_per_node_and_total(fakes) -> None:
     result = graph.run_query("q", "E1001", new_thread())
-    assert set(result["latency"]["per_node"]) == {"router", "policy_rag", "grounding_check"}
+    assert set(result["latency"]["per_node"]) == {
+        "router", "rewrite_question", "policy_rag", "grounding_check"}
     assert result["latency"]["total_seconds"] >= 0
 
 
@@ -147,6 +161,61 @@ def test_second_turn_in_same_thread_starts_fresh(fakes) -> None:
     fakes.chain_calls.clear()
     result = graph.run_query("q2", "E1001", thread)
     assert fakes.chain_calls == ["normal"] and result["grounded"] is True
+
+
+def test_first_message_is_not_rewritten(fakes) -> None:
+    result = graph.run_query("How many casual leaves?", "E1001", new_thread())
+    assert fakes.rewrite_calls == []  # nothing to fill in, so no LLM call
+    assert result["rewritten_question"] == "How many casual leaves?"
+    assert fakes.chain_questions == ["How many casual leaves?"]
+
+
+def test_follow_up_is_rewritten_with_the_earlier_chat(fakes) -> None:
+    thread = new_thread()
+    graph.run_query("What is the work from home rule?", "E1001", thread)
+    result = graph.run_query("and for interns?", "E1001", thread)
+
+    question, history = fakes.rewrite_calls[0]
+    assert question == "and for interns?"
+    assert "Employee: What is the work from home rule?" in history  # the earlier question
+    assert "Assistant:" in history  # the earlier answer
+    assert "and for interns?" not in history  # the new question is not part of the history
+    assert result["rewritten_question"] == "REWRITTEN: and for interns?"
+    assert fakes.chain_questions[-1] == "REWRITTEN: and for interns?"  # search used the new text
+
+
+def test_router_sees_the_earlier_chat_on_a_follow_up(fakes) -> None:
+    thread = new_thread()
+    graph.run_query("What is the work from home rule?", "E1001", thread)
+    graph.run_query("and for interns?", "E1001", thread)
+    assert fakes.route_histories[0] == graph.NO_HISTORY
+    assert "What is the work from home rule?" in fakes.route_histories[1]
+
+
+def test_rewrite_runs_only_on_the_policy_route(fakes) -> None:
+    thread = new_thread()
+    graph.run_query("hello", "E1001", thread)  # builds some history
+    for route in ("personal", "sensitive", "out_of_scope"):
+        fakes.route = route
+        graph.run_query("and now?", "E1001", thread)
+    assert fakes.rewrite_calls == []
+
+
+def test_a_different_thread_has_its_own_memory(fakes) -> None:
+    graph.run_query("What is the work from home rule?", "E1001", new_thread())
+    graph.run_query("and for interns?", "E1001", new_thread())  # a new chat: no history
+    assert fakes.rewrite_calls == []
+
+
+def test_history_is_cut_and_excludes_the_newest_question() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    messages = [HumanMessage(content="q1"), AIMessage(content="a" * 1000), HumanMessage(content="q2")]
+    history = graph.chat_history({"messages": messages})
+    assert [m.content[:2] for m in history] == ["q1", "aa"]
+    text = graph.history_to_text(history)
+    assert text.startswith("Employee: q1") and len(text) < 400
+    assert graph.history_to_text([]) == graph.NO_HISTORY
 
 
 def test_quote_check_ignores_punctuation_and_case() -> None:

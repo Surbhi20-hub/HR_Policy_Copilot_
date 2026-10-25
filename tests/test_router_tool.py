@@ -64,7 +64,7 @@ def test_personal_question_calls_the_tool_and_never_the_retriever(monkeypatch) -
         raise AssertionError("The RAG chain was called for a personal question!")
 
     monkeypatch.setattr(graph, "_decide_route",
-                        lambda question: RouteDecision(route="personal", reason="test"))
+                        lambda question, history="": RouteDecision(route="personal", reason="test"))
     monkeypatch.setattr(graph, "get_leave_balance", SpyTool())
     monkeypatch.setattr(graph, "_run_chain", fail_run_chain)
     monkeypatch.setattr("src.rag_chain.get_hybrid_retriever", FailIfCalled())
