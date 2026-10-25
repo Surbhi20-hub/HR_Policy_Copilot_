@@ -234,3 +234,26 @@ def test_router_prompt_has_no_stray_braces() -> None:
     assert "{" not in graph.ROUTER_PROMPT and "}" not in graph.ROUTER_PROMPT
     assert "{" not in graph.GROUNDING_PROMPT and "{" not in graph.SENSITIVE_RULES
     assert "{" not in graph.REWRITE_PROMPT and "}" not in graph.REWRITE_PROMPT
+
+
+def test_repeated_citations_of_one_section_are_shown_once() -> None:
+    answer = PolicyAnswer(
+        answer="x",
+        citations=[
+            Citation(source="wfh_policy.md", section="2. Hybrid Schedule", quote="3 days in office"),
+            Citation(source="wfh_policy.md", section="2. Hybrid Schedule", quote="2 days remote"),
+            Citation(source="wfh_policy.md", section="3. Equipment", quote="laptop"),
+        ],
+        confidence="high", escalate_to_hr=False,
+    )
+    update = graph._policy_update({"docs": make_docs(), "answer": answer})
+    assert [c["section"] for c in update["citations"]] == ["2. Hybrid Schedule", "3. Equipment"]
+    assert update["citations"][0]["quote"] == "3 days in office"  # the first one is kept
+
+
+def test_warm_up_builds_every_chain_without_calling_an_llm(monkeypatch) -> None:
+    built: list[str] = []
+    monkeypatch.setattr(graph, "get_app", lambda: None)
+    monkeypatch.setattr(graph, "_chain", lambda kind: built.append(kind))
+    graph.warm_up()
+    assert built == ["normal", "strict", "sensitive"]

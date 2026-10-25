@@ -291,10 +291,13 @@ def _check_grounding(question: str, answer: str, context: str) -> GroundingResul
 def _policy_update(result: dict) -> dict:
     """Copy a chain result into state fields."""
     policy_answer: PolicyAnswer = result["answer"]
+    citations: dict[tuple[str, str], dict] = {}
+    for citation in policy_answer.citations:  # keep the first citation of each source + section
+        citations.setdefault((citation.source, citation.section), citation.model_dump())
     return {
         "retrieved_docs": result["docs"],
         "answer": policy_answer.answer,
-        "citations": [citation.model_dump() for citation in policy_answer.citations],
+        "citations": list(citations.values()),
         "confidence": policy_answer.confidence,
         "escalate_to_hr": policy_answer.escalate_to_hr,
     }
@@ -442,6 +445,16 @@ def build_graph() -> Any:
 def get_app() -> Any:
     """One compiled graph for the whole program (so the chat memory is kept)."""
     return build_graph()
+
+
+def warm_up() -> None:
+    """Load the slow parts (embedding model, search indexes) now, so the first question is fast.
+
+    It makes no LLM call, so it costs nothing.
+    """
+    get_app()
+    for kind in ("normal", "strict", "sensitive"):
+        _chain(kind)
 
 
 # ---------------------------------------------------------------- the public function
