@@ -11,6 +11,7 @@ config:
 graph TD;
 	__start__([<p>__start__</p>]):::first
 	router(router)
+	rewrite_question(rewrite_question)
 	policy_rag(policy_rag)
 	grounding_check(grounding_check)
 	tool(tool)
@@ -21,8 +22,9 @@ graph TD;
 	grounding_check -. &nbsp;done&nbsp; .-> __end__;
 	grounding_check -. &nbsp;retry&nbsp; .-> policy_rag;
 	policy_rag --> grounding_check;
+	rewrite_question --> policy_rag;
 	router -.-> out_of_scope;
-	router -. &nbsp;policy&nbsp; .-> policy_rag;
+	router -. &nbsp;policy&nbsp; .-> rewrite_question;
 	router -.-> sensitive;
 	router -. &nbsp;personal&nbsp; .-> tool;
 	out_of_scope --> __end__;
@@ -37,6 +39,7 @@ graph TD;
 | Node | Job |
 |---|---|
 | router | Reads the question and picks one of 4 routes |
+| rewrite_question | Policy route only: turns a follow-up into a full question using the chat |
 | policy_rag | Finds policy chunks (hybrid search) and writes a cited answer |
 | grounding_check | Second LLM call that fact-checks the answer; retries once, then falls back |
 | tool | Looks up the employee's leave balance in the HRMS (ID from state) |
