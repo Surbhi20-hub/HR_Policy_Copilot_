@@ -36,10 +36,17 @@ PACKAGES: list[str] = [
     "sentence_transformers",
 ]
 
-# Which key each provider needs.
-PROVIDER_KEYS: dict[str, str] = {
+# Which key each provider needs (None = no key needed). Keep these in step with src/config.py.
+LLM_KEYS: dict[str, str | None] = {
     "groq": "GROQ_API_KEY",
     "google_genai": "GOOGLE_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "ollama": None,  # runs on your own computer
+}
+EMBEDDING_KEYS: dict[str, str | None] = {
+    "huggingface": None,  # runs on your own computer
+    "openai": "OPENAI_API_KEY",
+    "ollama": None,
 }
 
 
@@ -66,24 +73,34 @@ def check_env_file() -> bool:
     return show(ok, ".env file", msg)
 
 
-def check_keys() -> bool:
-    """The key for the chosen provider, and the LangSmith key, must be filled."""
-    load_dotenv(ROOT / ".env")
-    provider = os.getenv("LLM_PROVIDER", "").strip()
-    all_ok = True
-
-    needed = PROVIDER_KEYS.get(provider)
+def check_provider(name: str, provider: str, key_table: dict[str, str | None]) -> bool:
+    """Check that the provider is supported and that its API key (if it needs one) is filled."""
+    if provider not in key_table:
+        choices = ", ".join(key_table)
+        return show(False, name, f"'{provider}' is not supported. Use one of: {choices}")
+    needed = key_table[provider]
     if needed is None:
-        all_ok = show(False, "LLM_PROVIDER", f"'{provider}' is not groq or google_genai")
-    else:
-        filled = bool(os.getenv(needed, "").strip())
-        msg = f"{needed} is set" if filled else f"{needed} is empty in .env"
-        all_ok = show(filled, "LLM key", msg) and all_ok
+        return show(True, name, f"{provider} needs no API key")
+    filled = bool(os.getenv(needed, "").strip())
+    msg = f"{provider}: {needed} is set" if filled else f"{provider}: {needed} is empty in .env"
+    return show(filled, name, msg)
 
+
+def check_keys() -> bool:
+    """Check the key of the chosen LLM provider, the embedding provider and LangSmith."""
+    load_dotenv(ROOT / ".env")
+    # Same defaults as src/config.py, so this checker and the app always agree.
+    llm_provider = os.getenv("LLM_PROVIDER", "openai").strip()
+    embedding_provider = os.getenv("EMBEDDING_PROVIDER", "huggingface").strip().lower()
+
+    results = [
+        check_provider("LLM provider", llm_provider, LLM_KEYS),
+        check_provider("Embedding provider", embedding_provider, EMBEDDING_KEYS),
+    ]
     ls_filled = bool(os.getenv("LANGSMITH_API_KEY", "").strip())
     ls_msg = "LANGSMITH_API_KEY is set" if ls_filled else "LANGSMITH_API_KEY is empty in .env"
-    all_ok = show(ls_filled, "LangSmith key", ls_msg) and all_ok
-    return all_ok
+    results.append(show(ls_filled, "LangSmith key", ls_msg))
+    return all(results)
 
 
 def check_packages() -> bool:
