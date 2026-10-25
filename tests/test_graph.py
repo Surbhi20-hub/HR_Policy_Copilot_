@@ -233,3 +233,4 @@ def test_leave_text_for_probation_and_singular_day() -> None:
 def test_router_prompt_has_no_stray_braces() -> None:
     assert "{" not in graph.ROUTER_PROMPT and "}" not in graph.ROUTER_PROMPT
     assert "{" not in graph.GROUNDING_PROMPT and "{" not in graph.SENSITIVE_RULES
+    assert "{" not in graph.REWRITE_PROMPT and "}" not in graph.REWRITE_PROMPT
