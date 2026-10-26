@@ -116,3 +116,9 @@ def test_summarize_and_report(monkeypatch, tmp_path) -> None:
     assert "Metrics - hybrid" in report and "Failed questions - hybrid (1)" in report
     assert "Not ready yet" in report  # the vector run is missing
     assert json.loads((tmp_path / "results_hybrid.json").read_text(encoding="utf-8"))["rows"][0]["id"] == 1
+
+
+def test_report_includes_hand_written_failure_analysis(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(ev, "EVAL_DIR", tmp_path)
+    (tmp_path / "failure_analysis.md").write_text("## Failure analysis\n\nMy notes.", encoding="utf-8")
+    assert "My notes." in ev.build_report()

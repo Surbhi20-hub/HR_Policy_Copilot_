@@ -401,6 +401,10 @@ def build_report() -> str:
             lines.append(f"  - Got (route {row.get('route', '?')}): {str(row.get('answer', ''))[:300]}")
             lines += [f"  - Why it failed: {reason}" for reason in why]
 
+    analysis_file = EVAL_DIR / "failure_analysis.md"  # written by hand, so a new run must not erase it
+    if analysis_file.exists():
+        lines += ["", analysis_file.read_text(encoding="utf-8").strip()]
+
     lines += ["", "## How to read this", "",
               "- Correctness, refusal and faithfulness are decided by an LLM judge, so they can be a little wrong. "
               "Check every failed question by eye before trusting the number.",
