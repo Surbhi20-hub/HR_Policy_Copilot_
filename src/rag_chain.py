@@ -15,7 +15,7 @@ from langchain_core.runnables import (
 )
 
 from src.config import get_llm
-from src.retriever import TOP_K, get_hybrid_retriever, print_docs
+from src.retriever import TOP_K, get_hybrid_retriever, get_vector_retriever, print_docs
 from src.schemas import PolicyAnswer
 
 SYSTEM_PROMPT = """You are the HR Policy Copilot of a company. You answer employee questions \
@@ -76,11 +76,12 @@ def format_context(docs: list[Document]) -> str:
     return "\n\n".join(blocks)
 
 
-def build_rag_chain(extra_rules: str = "") -> Runnable:
+def build_rag_chain(extra_rules: str = "", retriever_mode: str = "hybrid") -> Runnable:
     """Build the chain. Input: a question (text). Output: dict with question, docs, answer.
 
     extra_rules is added after the normal rules (the graph uses it for strict mode and for
     sensitive questions). It must not contain curly braces.
+    retriever_mode is 'hybrid' (default) or 'vector' (used by the eval to compare the two).
     """
     prompt = ChatPromptTemplate.from_messages(
         [("system", SYSTEM_PROMPT + extra_rules), ("human", HUMAN_PROMPT)]
@@ -95,8 +96,9 @@ def build_rag_chain(extra_rules: str = "") -> Runnable:
         | prompt
         | llm
     )
+    retriever = get_vector_retriever(k=TOP_K) if retriever_mode == "vector" else get_hybrid_retriever(k=TOP_K)
     return (
-        RunnableParallel(question=RunnablePassthrough(), docs=get_hybrid_retriever(k=TOP_K))
+        RunnableParallel(question=RunnablePassthrough(), docs=retriever)
         | RunnablePassthrough.assign(answer=answer_step)
     )
 

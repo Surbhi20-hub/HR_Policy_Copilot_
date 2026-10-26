@@ -241,11 +241,27 @@ def _rewrite_llm() -> Any:
     return get_llm().with_structured_output(RewrittenQuestion).with_retry(stop_after_attempt=3)
 
 
-@lru_cache(maxsize=3)
-def _chain(kind: Literal["normal", "strict", "sensitive"]) -> Any:
-    """Build each RAG chain once. 'strict' and 'sensitive' just add extra rules."""
+RETRIEVER_MODE = "hybrid"  # 'hybrid' (normal) or 'vector' (only the eval changes this)
+
+
+def set_retriever_mode(mode: Literal["hybrid", "vector"]) -> None:
+    """Choose how chunks are found. The eval uses this to compare vector with hybrid."""
+    global RETRIEVER_MODE
+    if mode not in ("hybrid", "vector"):
+        raise ValueError("mode must be 'hybrid' or 'vector'")
+    RETRIEVER_MODE = mode
+
+
+@lru_cache(maxsize=6)
+def _build_chain(kind: str, mode: str) -> Any:
+    """Build each (kind, retriever mode) chain once. 'strict' and 'sensitive' add extra rules."""
     extra = {"normal": "", "strict": STRICT_RULES, "sensitive": SENSITIVE_RULES}[kind]
-    return build_rag_chain(extra_rules=extra)
+    return build_rag_chain(extra_rules=extra, retriever_mode=mode)
+
+
+def _chain(kind: Literal["normal", "strict", "sensitive"]) -> Any:
+    """Return the RAG chain for this kind, using the current retriever mode."""
+    return _build_chain(kind, RETRIEVER_MODE)
 
 
 def _decide_route(question: str, history: str = NO_HISTORY) -> RouteDecision:
@@ -468,6 +484,19 @@ def _count_tokens(usage_by_model: dict) -> dict[str, int]:
     return totals
 
 
+def _retrieved_info(final: dict) -> list[dict]:
+    """The chunks used for the answer, as plain dicts (the eval needs them for hit-rate)."""
+    return [
+        {
+            "source": doc.metadata.get("source", ""),
+            "section": doc.metadata.get("section", ""),
+            "section_number": doc.metadata.get("section_number", ""),
+            "text": doc.page_content,
+        }
+        for doc in final.get("retrieved_docs", [])
+    ]
+
+
 def run_query(question: str, employee_id: str, thread_id: str) -> dict:
     """Ask the copilot one question. Same thread_id = it remembers the earlier chat."""
     # Fresh values for every turn (the memory would otherwise keep last turn's values).
@@ -497,6 +526,7 @@ def run_query(question: str, employee_id: str, thread_id: str) -> dict:
         "confidence": final.get("confidence", "low"),
         "escalate_to_hr": final.get("escalate_to_hr", False),
         "grounded": final.get("grounded", False),
+        "retrieved": _retrieved_info(final) if final["route"] in ("policy", "sensitive") else [],
         "latency": {"per_node": final.get("timings", {}), "total_seconds": total_seconds},
         "tokens": _count_tokens(usage.usage_metadata) if usage is not None else None,
     }
