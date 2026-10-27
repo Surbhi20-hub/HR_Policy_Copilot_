@@ -257,3 +257,29 @@ def test_warm_up_builds_every_chain_without_calling_an_llm(monkeypatch) -> None:
     monkeypatch.setattr(graph, "_chain", lambda kind: built.append(kind))
     graph.warm_up()
     assert built == ["normal", "strict", "sensitive"]
+
+
+def test_real_chain_steps_show_up_as_retrieval_and_answer(fakes, monkeypatch) -> None:
+    monkeypatch.setattr(graph, "_run_chain", lambda kind, q: {**make_result(), "retrieval_seconds": 0.25, "answer_seconds": 1.5})
+    per_node = graph.run_query("q", "E1001", new_thread())["latency"]["per_node"]
+    assert per_node["retrieval"] == 0.25 and per_node["answer"] == 1.5
+    assert "policy_rag" in per_node  # the whole node is still timed, the report does not count it twice
+
+
+def test_run_query_logs_numbers_with_a_masked_employee_id_and_no_question(fakes, monkeypatch) -> None:
+    records: list[dict] = []
+    monkeypatch.setattr(graph, "append_query_log", lambda record, *a, **k: records.append(record))
+    graph.run_query("What is my secret question?", "E1001", new_thread())
+    assert len(records) == 1
+    record = records[0]
+    assert record["employee"] == "E1***" and record["route"] == "policy"
+    assert record["question_chars"] == len("What is my secret question?")
+    assert "secret" not in str(record) and "E1001" not in str(record)  # no question text, no real ID
+    assert "router" in record["per_node_seconds"] and record["total_seconds"] >= 0
+
+
+def test_run_query_can_skip_the_log(fakes, monkeypatch) -> None:
+    records: list[dict] = []
+    monkeypatch.setattr(graph, "append_query_log", lambda record, *a, **k: records.append(record))
+    graph.run_query("q", "E1001", new_thread(), log=False)
+    assert records == []

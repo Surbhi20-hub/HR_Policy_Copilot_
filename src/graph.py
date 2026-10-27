@@ -8,6 +8,7 @@ Try it from the project root:  python -m src.graph
 (it also saves the picture of the graph to docs/architecture.md)
 """
 import functools
+import os
 import re
 import time
 from contextlib import nullcontext
@@ -23,6 +24,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from src.config import ROOT_DIR, get_llm
+from src.query_log import append_query_log, estimate_cost, mask_employee_id
 from src.rag_chain import STRICT_RULES, build_rag_chain, format_context
 from src.schemas import GroundingResult, PolicyAnswer, RewrittenQuestion, RouteDecision
 from src.tools import get_leave_balance
@@ -185,6 +187,8 @@ def timed(name: str) -> Callable:
             update = node(state)
             timings = dict(state.get("timings", {}))
             timings[name] = round(timings.get(name, 0.0) + time.perf_counter() - start, 3)
+            for step, seconds in update.pop("_steps", {}).items():  # sub-steps such as retrieval
+                timings[step] = round(timings.get(step, 0.0) + seconds, 3)
             update["timings"] = timings
             return update
 
@@ -310,13 +314,16 @@ def _policy_update(result: dict) -> dict:
     citations: dict[tuple[str, str], dict] = {}
     for citation in policy_answer.citations:  # keep the first citation of each source + section
         citations.setdefault((citation.source, citation.section), citation.model_dump())
-    return {
+    update = {
         "retrieved_docs": result["docs"],
         "answer": policy_answer.answer,
         "citations": list(citations.values()),
         "confidence": policy_answer.confidence,
         "escalate_to_hr": policy_answer.escalate_to_hr,
     }
+    if "retrieval_seconds" in result:  # the real chain reports its two steps; the 'timed' wrapper reads this
+        update["_steps"] = {"retrieval": result["retrieval_seconds"], "answer": result.get("answer_seconds", 0.0)}
+    return update
 
 
 def _final(answer: str) -> dict:
@@ -497,8 +504,11 @@ def _retrieved_info(final: dict) -> list[dict]:
     ]
 
 
-def run_query(question: str, employee_id: str, thread_id: str) -> dict:
-    """Ask the copilot one question. Same thread_id = it remembers the earlier chat."""
+def run_query(question: str, employee_id: str, thread_id: str, log: bool = True) -> dict:
+    """Ask the copilot one question. Same thread_id = it remembers the earlier chat.
+
+    log=True also writes the numbers (no question text) to logs/queries.jsonl.
+    """
     # Fresh values for every turn (the memory would otherwise keep last turn's values).
     inputs: GraphState = {
         "messages": [HumanMessage(content=question)],
@@ -518,7 +528,8 @@ def run_query(question: str, employee_id: str, thread_id: str) -> dict:
         final = get_app().invoke(inputs, config=config)
     total_seconds = round(time.perf_counter() - start, 3)
 
-    return {
+    tokens = _count_tokens(usage.usage_metadata) if usage is not None else None
+    result = {
         "answer": final["answer"],
         "citations": final.get("citations", []),
         "route": final["route"],
@@ -528,8 +539,34 @@ def run_query(question: str, employee_id: str, thread_id: str) -> dict:
         "grounded": final.get("grounded", False),
         "retrieved": _retrieved_info(final) if final["route"] in ("policy", "sensitive") else [],
         "latency": {"per_node": final.get("timings", {}), "total_seconds": total_seconds},
-        "tokens": _count_tokens(usage.usage_metadata) if usage is not None else None,
+        "tokens": tokens,
     }
+    if log:
+        _log_query(question, employee_id, result, final.get("retry_count", 0))
+    return result
+
+
+def _log_query(question: str, employee_id: str, result: dict, retry_count: int) -> None:
+    """Write one line of numbers to logs/queries.jsonl. The question text is NOT stored (privacy)."""
+    model = os.getenv("LLM_MODEL", "")
+    tokens = result["tokens"] or {}
+    append_query_log({
+        "employee": mask_employee_id(employee_id),
+        "route": result["route"],
+        "retriever": RETRIEVER_MODE,
+        "llm": f"{os.getenv('LLM_PROVIDER', '')}/{model}",
+        "question_chars": len(question),
+        "total_seconds": result["latency"]["total_seconds"],
+        "per_node_seconds": result["latency"]["per_node"],
+        "input_tokens": tokens.get("input_tokens"),
+        "output_tokens": tokens.get("output_tokens"),
+        "total_tokens": tokens.get("total_tokens"),
+        "estimated_cost_usd": round(estimate_cost(result["tokens"], model), 6),
+        "grounded": result["grounded"],
+        "confidence": result["confidence"],
+        "escalate_to_hr": result["escalate_to_hr"],
+        "retry_count": retry_count,
+    })
 
 
 def save_architecture(path: Path = ARCHITECTURE_FILE) -> None:

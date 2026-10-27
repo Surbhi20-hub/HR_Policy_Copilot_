@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field  # noqa: E402
 
 from src.config import get_llm  # noqa: E402
 from src.graph import run_query, set_retriever_mode, warm_up  # noqa: E402
+from src.query_log import cost_from_tokens, price_for  # noqa: E402
 
 EVAL_DIR = ROOT / "eval"
 GOLDEN_FILE = EVAL_DIR / "golden_qa.json"
@@ -38,11 +39,22 @@ TARGET_CORRECTNESS = 0.80
 TARGET_REFUSAL = 0.90
 TARGET_LATENCY_SECONDS = 8.0
 
-# ESTIMATED price in USD per 1 million tokens. Our real cost is Rs 0 (free tier).
-# These numbers are my best guess for a small Groq model: CHECK the Groq pricing page and
-# change them in .env (COST_INPUT_PER_M, COST_OUTPUT_PER_M) if needed.
-PRICE_INPUT_PER_M = float(os.getenv("COST_INPUT_PER_M", "0.075"))
-PRICE_OUTPUT_PER_M = float(os.getenv("COST_OUTPUT_PER_M", "0.30"))
+# ESTIMATED price in USD per 1 million tokens, from the small table in src/query_log.py.
+# Our real cost is Rs 0 (free tier). Change the table, or COST_INPUT_PER_M / COST_OUTPUT_PER_M in .env.
+PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M = price_for(os.getenv("LLM_MODEL", ""))
+
+# Latency target (AC11). When the average is above it, the report shows the slowest steps and fixes.
+SLOW_STEPS_SHOWN = 3
+STEP_FIXES = {
+    "retrieval": "Lower k (TOP_K in src/retriever.py, now 5). Check the hit-rate afterwards, it may drop.",
+    "answer": "Shorter context: lower k or use shorter chunks, so the LLM reads less. Also keep answers short.",
+    "grounding_check": "Use a smaller, faster model for this check (needs a new model setting in src/config.py; not built yet).",
+    "router": "Use a smaller, faster model for the router (needs a new model setting in src/config.py; not built yet).",
+    "rewrite_question": "Only runs on follow-ups. A smaller model would also help here (not built yet).",
+    "tool": "Already fast: it only reads the HRMS file.",
+    "out_of_scope": "Already fast: no LLM call.",
+}
+PARENT_NODES = ("policy_rag", "sensitive")  # these contain retrieval + answer, so do not count them twice
 
 RETRY_WAITS = (20, 40, 80)  # seconds to wait after the 1st, 2nd, 3rd failed try
 DEFAULT_SLEEP = 4.0  # polite pause between questions (free tier allows ~30 calls per minute)
@@ -164,8 +176,7 @@ def estimate_cost(tokens: dict | None) -> float:
     """ESTIMATED price in USD for one question, from its token counts."""
     if not tokens:
         return 0.0
-    return (tokens.get("input_tokens", 0) * PRICE_INPUT_PER_M
-            + tokens.get("output_tokens", 0) * PRICE_OUTPUT_PER_M) / 1_000_000
+    return cost_from_tokens(tokens, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M)
 
 
 def format_context(chunks: list[dict]) -> str:
@@ -181,6 +192,26 @@ def rate(good: int, total: int) -> float | None:
 def pct(value: float | None) -> str:
     """0.8333 -> '83.3%' (or 'n/a')."""
     return "n/a" if value is None else f"{value * 100:.1f}%"
+
+
+def step_seconds(per_node: dict) -> dict[str, float]:
+    """The steps of one question (retrieval, answer, ...), without the parent nodes that contain them."""
+    if "retrieval" not in per_node:
+        return dict(per_node)
+    return {step: secs for step, secs in per_node.items() if step not in PARENT_NODES}
+
+
+def slowest_steps(rows: list[dict], count: int = SLOW_STEPS_SHOWN) -> list[tuple[str, float]]:
+    """The steps that take the most time per question, as (step, average seconds), slowest first."""
+    timed_rows = [r for r in rows if r.get("per_node") and not r.get("error")]
+    if not timed_rows:
+        return []
+    totals: dict[str, float] = {}
+    for row in timed_rows:
+        for step, secs in step_seconds(row["per_node"]).items():
+            totals[step] = totals.get(step, 0.0) + secs
+    averages = {step: total / len(timed_rows) for step, total in totals.items()}
+    return sorted(averages.items(), key=lambda item: item[1], reverse=True)[:count]
 
 
 def summarize(rows: list[dict]) -> dict:
@@ -211,6 +242,9 @@ def summarize(rows: list[dict]) -> dict:
         "latency_p95": percentile(times, 95),
         "wait_total": sum(r.get("wait_seconds", 0.0) for r in rows),
         "tokens_avg": sum(tokens) / n,
+        "tokens_total": sum(tokens),
+        "tokens_input": sum((r.get("tokens") or {}).get("input_tokens", 0) for r in done),
+        "tokens_output": sum((r.get("tokens") or {}).get("output_tokens", 0) for r in done),
         "cost_avg": sum(costs) / n,
         "cost_total": sum(costs),
     }
@@ -249,7 +283,7 @@ def with_backoff(call: Any, clock: WaitClock, label: str) -> Any:
 
 def ask_copilot(question: str, employee_id: str, thread_id: str) -> dict:
     """Ask the copilot (a tiny wrapper so the tests can replace it)."""
-    return run_query(question, employee_id=employee_id, thread_id=thread_id)
+    return run_query(question, employee_id=employee_id, thread_id=thread_id, log=False)  # eval keeps its own results file
 
 
 def evaluate_item(item: dict, thread_id: str, clock: WaitClock) -> dict:
@@ -270,6 +304,7 @@ def evaluate_item(item: dict, thread_id: str, clock: WaitClock) -> dict:
         "citations": result["citations"],
         "retrieved": [{k: c[k] for k in ("source", "section", "section_number")} for c in chunks],
         "latency_seconds": result["latency"]["total_seconds"],
+        "per_node": result["latency"].get("per_node", {}),
         "tokens": result["tokens"],
         "cost_usd": estimate_cost(result["tokens"]),
         "correct": None, "refused": None, "faithful": None, "hit": None, "citation_ok": None,
@@ -355,8 +390,44 @@ def _metric_lines(stats: dict) -> list[tuple[str, str, str, str]]:
         ("Latency average", f"{stats['latency_avg']:.2f} s", f"< {TARGET_LATENCY_SECONDS:.0f} s", latency_ok),
         ("Latency p95", f"{stats['latency_p95']:.2f} s", "-", "-"),
         ("Tokens per question (average)", f"{stats['tokens_avg']:.0f}", "-", "-"),
+        ("Total tokens (input + output)",
+         f"{stats['tokens_total']:,} ({stats['tokens_input']:,} + {stats['tokens_output']:,})", "-", "-"),
         ("ESTIMATED cost per question", f"${stats['cost_avg']:.5f}", "-", "-"),
+        ("ESTIMATED total cost", f"${stats['cost_total']:.4f}", "-", "-"),
     ]
+
+
+def speed_section(name: str, rows: list[dict], stats: dict, meta: dict) -> list[str]:
+    """Report lines about speed, tokens and cost. Free-tier waiting is shown on its own line."""
+    price_in, price_out = meta.get("prices", [PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M])
+    lines = [
+        "", f"### Speed, tokens and cost - {name}", "",
+        "| Item | Value |", "|---|---|",
+        f"| Average latency | {stats['latency_avg']:.2f} s (target < {TARGET_LATENCY_SECONDS:.0f} s) |",
+        f"| p95 latency | {stats['latency_p95']:.2f} s |",
+        f"| Total tokens | {stats['tokens_total']:,} ({stats['tokens_input']:,} in + {stats['tokens_output']:,} out) |",
+        f"| ESTIMATED cost | ${stats['cost_total']:.4f} total, ${stats['cost_avg']:.5f} per question "
+        f"(price guess: ${price_in} in / ${price_out} out per 1M tokens) |",
+        "| Real cost | Rs 0 (free tiers) |",
+        f"| Free-tier waiting (NOT in latency) | {stats['wait_total']:.0f} s (retries and pauses between questions) |",
+        "",
+    ]
+    steps = slowest_steps(rows, count=20)
+    if not steps:
+        return lines + ["No per-step timing in this results file (it was made before step timing existed).", ""]
+    total = sum(secs for _, secs in steps) or 1.0
+    lines += ["Where the time goes (average seconds per question):", "",
+              "| Step | Average seconds | Share |", "|---|---|---|"]
+    lines += [f"| {step} | {secs:.2f} | {secs / total * 100:.0f}% |" for step, secs in steps]
+    if stats["latency_avg"] > TARGET_LATENCY_SECONDS:
+        lines += ["", f"The average is over {TARGET_LATENCY_SECONDS:.0f} s. The {SLOW_STEPS_SHOWN} slowest steps and simple fixes:", ""]
+        for step, secs in steps[:SLOW_STEPS_SHOWN]:
+            lines.append(f"- **{step}** ({secs:.2f} s): {STEP_FIXES.get(step, 'No simple fix known.')}")
+        slow_questions = sorted((r for r in rows if not r.get("error")), key=lambda r: r["latency_seconds"], reverse=True)[:3]
+        lines += ["", "Slowest single questions: " + ", ".join(f"Q{r['id']} ({r['latency_seconds']:.0f} s)" for r in slow_questions) +
+                  ". If these are far above the rest, my guess is free-tier slowdowns inside the LLM client "
+                  "(not proven; they cannot be separated from real latency)."]
+    return lines + [""]
 
 
 def build_report() -> str:
@@ -374,8 +445,7 @@ def build_report() -> str:
             "| Metric | Result | Target | Status |", "|---|---|---|---|",
         ]
         lines += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in _metric_lines(stats)]
-        lines += ["", f"Time spent waiting for rate limits and pauses (NOT in latency): {stats['wait_total']:.0f} s. "
-                      f"ESTIMATED total cost: ${stats['cost_total']:.4f} (real cost: Rs 0, free tier).", ""]
+        lines += speed_section(name, data[name]["rows"], stats, meta)
 
     lines += ["## Vector vs hybrid", ""]
     if data["vector"] and data["hybrid"]:
@@ -409,7 +479,7 @@ def build_report() -> str:
               "- Correctness, refusal and faithfulness are decided by an LLM judge, so they can be a little wrong. "
               "Check every failed question by eye before trusting the number.",
               "- Hit-rate skips unanswerable questions and personal (HRMS tool) questions, which never retrieve chunks.",
-              "- Cost is an ESTIMATE from token counts and the price numbers in eval/run_eval.py.", ""]
+              "- Cost is an ESTIMATE from token counts and the small price table in src/query_log.py.", ""]
     return "\n".join(lines)
 
 
@@ -437,7 +507,7 @@ def main() -> None:
     meta = {
         "retriever": args.retriever, "date": date.today().isoformat(),
         "llm": f"{os.getenv('LLM_PROVIDER', 'default')} / {os.getenv('LLM_MODEL', 'default')}",
-        "judge": judge_name(),
+        "judge": judge_name(), "prices": [PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M],
     }
     saved = None if args.fresh else load_results(args.retriever)
     rows: list[dict] = [r for r in (saved["rows"] if saved else []) if not r.get("error")]

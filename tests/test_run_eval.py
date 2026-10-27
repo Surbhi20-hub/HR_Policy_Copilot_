@@ -33,7 +33,7 @@ def test_percentile_and_cost() -> None:
 
 def fake_result(route: str = "policy", citations: int = 1, chunks: list | None = None) -> dict:
     return {"answer": "18 days", "route": route, "citations": [{"source": "a"}] * citations,
-            "retrieved": CHUNKS if chunks is None else chunks, "latency": {"total_seconds": 2.0},
+            "retrieved": CHUNKS if chunks is None else chunks, "latency": {"total_seconds": 2.0, "per_node": {"router": 0.5, "policy_rag": 1.0, "retrieval": 0.2, "answer": 0.8}},
             "tokens": {"input_tokens": 1000, "output_tokens": 100, "total_tokens": 1100}}
 
 
@@ -122,3 +122,44 @@ def test_report_includes_hand_written_failure_analysis(monkeypatch, tmp_path) ->
     monkeypatch.setattr(ev, "EVAL_DIR", tmp_path)
     (tmp_path / "failure_analysis.md").write_text("## Failure analysis\n\nMy notes.", encoding="utf-8")
     assert "My notes." in ev.build_report()
+
+
+def test_step_seconds_does_not_count_parent_nodes_twice() -> None:
+    per_node = {"router": 1.0, "policy_rag": 3.0, "retrieval": 0.5, "answer": 2.5, "grounding_check": 1.0}
+    assert ev.step_seconds(per_node) == {"router": 1.0, "retrieval": 0.5, "answer": 2.5, "grounding_check": 1.0}
+    assert ev.step_seconds({"router": 1.0, "tool": 0.1}) == {"router": 1.0, "tool": 0.1}
+
+
+def test_slowest_steps_are_averaged_and_sorted() -> None:
+    rows = [
+        {"per_node": {"router": 1.0, "retrieval": 0.5, "answer": 4.0}},
+        {"per_node": {"router": 3.0, "retrieval": 0.5, "answer": 8.0}},
+        {"per_node": {"router": 9.0}, "error": "boom"},  # error rows are ignored
+        {"id": 9},  # old rows without timing are ignored
+    ]
+    assert ev.slowest_steps(rows, count=2) == [("answer", 6.0), ("router", 2.0)]
+    assert ev.slowest_steps([{"id": 1}]) == []
+
+
+def _timed_row(latency: float) -> dict:
+    return {"id": 1, "question": "q", "type": "policy", "answerable": True, "expected": "e", "source": "s#1",
+            "correct": True, "refused": None, "faithful": True, "hit": True, "citation_ok": True,
+            "route": "policy", "answer": "a", "latency_seconds": latency, "wait_seconds": 30,
+            "per_node": {"router": 1.0, "policy_rag": latency - 1, "retrieval": 0.5, "answer": latency - 1.5},
+            "tokens": {"input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200}, "cost_usd": 0.0001}
+
+
+def test_report_shows_slowest_steps_only_when_over_the_target(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(ev, "EVAL_DIR", tmp_path)
+    meta = {"date": "2026-10-27", "llm": "l", "judge": "j", "prices": [0.1, 0.4]}
+    ev.save_results("hybrid", meta, [_timed_row(12.0)])
+    slow = ev.build_report()
+    assert "The 3 slowest steps" in slow and "**answer**" in slow
+    assert "Lower k" in slow or "Shorter context" in slow
+    assert "Free-tier waiting (NOT in latency) | 30 s" in slow
+    assert "ESTIMATED" in slow and "Rs 0" in slow and "$0.1 in / $0.4 out" in slow
+    assert "1,200 (1,000 in + 200 out)" in slow
+
+    ev.save_results("hybrid", meta, [_timed_row(4.0)])
+    fast = ev.build_report()
+    assert "slowest steps" not in fast and "Where the time goes" in fast

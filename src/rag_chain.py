@@ -4,15 +4,11 @@ Try it from the project root:  python -m src.rag_chain
 Or ask your own question:      python -m src.rag_chain "Can I fly business class to Delhi?"
 """
 import sys
+import time
 
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import (
-    Runnable,
-    RunnableLambda,
-    RunnableParallel,
-    RunnablePassthrough,
-)
+from langchain_core.runnables import Runnable, RunnableLambda
 
 from src.config import get_llm
 from src.retriever import TOP_K, get_hybrid_retriever, get_vector_retriever, print_docs
@@ -82,7 +78,10 @@ def format_context(docs: list[Document]) -> str:
 
 
 def build_rag_chain(extra_rules: str = "", retriever_mode: str = "hybrid") -> Runnable:
-    """Build the chain. Input: a question (text). Output: dict with question, docs, answer.
+    """Build the chain. Input: a question (text).
+
+    Output: dict with question, docs, answer, plus retrieval_seconds and answer_seconds
+    (how long the search and the LLM answer took, so the eval can show where time goes).
 
     extra_rules is added after the normal rules (the graph uses it for strict mode and for
     sensitive questions). It must not contain curly braces.
@@ -102,10 +101,21 @@ def build_rag_chain(extra_rules: str = "", retriever_mode: str = "hybrid") -> Ru
         | llm
     )
     retriever = get_vector_retriever(k=TOP_K) if retriever_mode == "vector" else get_hybrid_retriever(k=TOP_K)
-    return (
-        RunnableParallel(question=RunnablePassthrough(), docs=retriever)
-        | RunnablePassthrough.assign(answer=answer_step)
-    )
+
+    def retrieve(question: str) -> dict:
+        """Step 1: find the chunks and time it."""
+        start = time.perf_counter()
+        docs = retriever.invoke(question)
+        return {"question": question, "docs": docs,
+                "retrieval_seconds": round(time.perf_counter() - start, 3)}
+
+    def answer(data: dict) -> dict:
+        """Step 2: ask the LLM and time it."""
+        start = time.perf_counter()
+        reply = answer_step.invoke(data)
+        return {**data, "answer": reply, "answer_seconds": round(time.perf_counter() - start, 3)}
+
+    return RunnableLambda(retrieve) | RunnableLambda(answer)
 
 
 def print_result(result: dict) -> None:
