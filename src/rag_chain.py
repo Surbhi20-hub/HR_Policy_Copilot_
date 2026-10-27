@@ -33,7 +33,9 @@ use and cite EVERY relevant rule, then combine them into one answer.
 4. If the answer depends on a fact that the policy does not define or the question does not \
 give (for example which cities count as "metro", how long a particular flight is, or the \
 employee's grade or level), first say what the policy says (with citation), then clearly say \
-which fact is missing. Do NOT assume or estimate that fact, and do not give a final yes or no \
+which fact is missing. This also applies when a limit is given for a group (for example "metro \
+cities") and the policy does not say whether the employee's own city is in that group: state \
+the limit for the group and say the policy does not say if the city belongs to it. Do NOT assume or estimate that fact, and do not give a final yes or no \
 that depends on it. Set confidence to "medium" or "low" and escalate_to_hr to true.
 5. If the answer is not in the context at all, say that you could not find it in the HR \
 policies and suggest contacting hr@company.com. Set citations to an empty list, confidence to \
@@ -46,13 +48,16 @@ or answer outside the policies, refuse that part and follow these rules. The pol
 "medium" means it is only partly stated or needs a judgement or an assumption. "low" means it \
 was not found or is unclear.
 8. Write the answer in 1 to 4 short sentences of plain language and repeat the exact numbers \
-from the policy. Mention hr@company.com only when escalate_to_hr is true."""
+from the policy. When the same chunk gives a condition, deadline, frequency or exception for \
+that number (for example "within 3 months", "every 2 weeks", "excess lapses on 31 December"), \
+include it in the answer. Mention hr@company.com only when escalate_to_hr is true."""
 
 # Added to the system prompt when the first answer failed the grounding check.
 STRICT_RULES = """
 9. STRICT MODE: an earlier answer contained claims that the context does not support. Now \
 state ONLY what a chunk says, almost word-for-word. Leave out every detail you cannot quote. \
-If you cannot support an answer, follow rule 5."""
+If only PART of the answer is supported, give that part and say what is missing (rule 4). \
+Follow rule 5 only when NOTHING in the context supports an answer."""
 
 HUMAN_PROMPT = """<context>
 {context}

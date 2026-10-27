@@ -3,7 +3,7 @@ import pytest
 from langchain_core.documents import Document
 from pydantic import ValidationError
 
-from src.rag_chain import SYSTEM_PROMPT, format_context
+from src.rag_chain import STRICT_RULES, SYSTEM_PROMPT, format_context
 from src.schemas import Citation, PolicyAnswer
 
 
@@ -56,3 +56,10 @@ def test_context_shows_source_and_section_of_every_chunk() -> None:
 def test_prompt_has_no_stray_braces() -> None:
     """Curly braces would break the prompt template."""
     assert "{" not in SYSTEM_PROMPT and "}" not in SYSTEM_PROMPT
+
+
+def test_prompt_asks_for_conditions_and_partial_answers() -> None:
+    assert "condition, deadline, frequency or exception" in SYSTEM_PROMPT  # Q2, Q4, Q23 fix
+    assert "whether the employee's own city is in that group" in SYSTEM_PROMPT  # Q26 fix
+    assert "PART of the answer is supported" in STRICT_RULES  # Q26: strict mode must not drop to rule 5
+    assert "{" not in STRICT_RULES and "}" not in STRICT_RULES
