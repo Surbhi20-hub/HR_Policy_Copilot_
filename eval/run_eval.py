@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field  # noqa: E402
 
 from src.config import get_llm  # noqa: E402
 from src.graph import run_query, set_retriever_mode, warm_up  # noqa: E402
+from src.logging_utils import setup_logging  # noqa: E402
 from src.query_log import cost_from_tokens, price_for  # noqa: E402
 
 EVAL_DIR = ROOT / "eval"
@@ -497,6 +498,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Run (or resume) the evaluation for one retriever, then rewrite eval/report.md."""
+    setup_logging()
     args = parse_args()
     golden = json.loads(GOLDEN_FILE.read_text(encoding="utf-8"))
     if args.limit:

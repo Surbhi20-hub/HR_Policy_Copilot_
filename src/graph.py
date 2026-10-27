@@ -24,10 +24,13 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from src.config import ROOT_DIR, get_llm
+from src.logging_utils import get_logger, setup_logging
 from src.query_log import append_query_log, estimate_cost, mask_employee_id
 from src.rag_chain import STRICT_RULES, build_rag_chain, format_context
 from src.schemas import GroundingResult, PolicyAnswer, RewrittenQuestion, RouteDecision
 from src.tools import get_leave_balance
+
+logger = get_logger("graph")
 
 try:  # counts tokens of every LLM call (needs a recent langchain-core)
     from langchain_core.callbacks import get_usage_metadata_callback
@@ -337,6 +340,7 @@ def _final(answer: str) -> dict:
 def router_node(state: GraphState) -> dict:
     """Read the question and choose a route."""
     decision = _decide_route(last_question(state), history_to_text(chat_history(state)))
+    logger.info("route=%s employee=%s", decision.route, state.get("employee_id", ""))
     return {"route": decision.route}
 
 
@@ -394,8 +398,10 @@ def tool_node(state: GraphState) -> dict:
         return {"answer": answer, "citations": [], "confidence": "low", "escalate_to_hr": False,
                 "grounded": True, **_final(answer)}
 
+    logger.info("leave balance lookup for %s", employee_id)
     record = get_leave_balance.invoke({"employee_id": employee_id})
     if "error" in record:
+        logger.warning("employee %s not found in the HRMS", employee_id)
         answer = (f"I couldn't find employee {employee_id} in the HR system. "
                   f"Please check the ID or contact {HR_EMAIL}.")
         return {"answer": answer, "citations": [], "confidence": "low", "escalate_to_hr": True,
@@ -592,6 +598,7 @@ def save_architecture(path: Path = ARCHITECTURE_FILE) -> None:
 
 def main() -> None:
     """Save the diagram, then run the demo questions as employee E1001."""
+    setup_logging()
     save_architecture()
     for number, question in enumerate(DEMO_QUESTIONS, start=1):
         result = run_query(question, employee_id="E1001", thread_id=f"demo-{number}")

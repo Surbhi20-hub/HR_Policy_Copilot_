@@ -28,6 +28,7 @@ needs_llm = pytest.mark.skipif(llm_key_is_missing(), reason="no LLM API key in .
 # ---------------------------------------------------------------- A. the router (real LLM)
 
 @needs_llm
+@pytest.mark.llm
 @pytest.mark.parametrize(
     ("question", "expected_route"),
     [

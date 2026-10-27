@@ -21,6 +21,7 @@ from src.app_support import (  # noqa: E402
     user_label,
 )
 from src.graph import HR_EMAIL, run_query, warm_up  # noqa: E402
+from src.logging_utils import setup_logging  # noqa: E402
 
 st.set_page_config(page_title="HR Policy Copilot", page_icon="💬")
 
@@ -122,6 +123,7 @@ def ask(question: str, employee_id: str) -> None:
 
 def main() -> None:
     """Draw the whole page. Streamlit runs this again after every click."""
+    setup_logging()
     init_state()
     load_models()
     users = load_users()
