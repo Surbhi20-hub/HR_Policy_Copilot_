@@ -33,7 +33,7 @@ EVAL_DIR = ROOT / "eval"
 GOLDEN_FILE = EVAL_DIR / "golden_qa.json"
 REPORT_FILE = EVAL_DIR / "report.md"
 DEFAULT_EMPLOYEE = "E1001"
-RETRIEVERS = ("vector", "hybrid")
+RETRIEVERS = ("vector", "hybrid", "rerank")
 
 # Targets from the assignment.
 TARGET_CORRECTNESS = 0.80
@@ -435,7 +435,7 @@ def build_report() -> str:
     """Build the whole eval/report.md text from whichever results files exist."""
     data = {name: load_results(name) for name in RETRIEVERS}
     lines = ["# Evaluation report", ""]
-    for name in ("hybrid", "vector"):
+    for name in ("hybrid", "vector", "rerank"):
         if data[name] is None:
             continue
         meta, stats = data[name]["meta"], summarize(data[name]["rows"])
@@ -455,10 +455,10 @@ def build_report() -> str:
         for (name, v, _, _), (_, h, _, _) in zip(_metric_lines(vec), _metric_lines(hyb)):
             lines.append(f"| {name} | {v} | {h} |")
     else:
-        missing = [n for n in RETRIEVERS if data[n] is None]
+        missing = [n for n in ('vector', 'hybrid') if data[n] is None]
         lines.append(f"Not ready yet. Still to run: {', '.join('--retriever ' + m for m in missing)}")
 
-    for name in ("hybrid", "vector"):
+    for name in ("hybrid", "vector", "rerank"):
         if data[name] is None:
             continue
         failed = [(r, failure_reasons(r)) for r in data[name]["rows"]]
@@ -471,6 +471,10 @@ def build_report() -> str:
             lines.append(f"  - Expected: {row['expected']}")
             lines.append(f"  - Got (route {row.get('route', '?')}): {str(row.get('answer', ''))[:300]}")
             lines += [f"  - Why it failed: {reason}" for reason in why]
+
+    rerank_file = EVAL_DIR / "rerank_report.md"  # written by eval/compare_rerank.py (no LLM needed)
+    if rerank_file.exists():
+        lines += ["", rerank_file.read_text(encoding="utf-8").strip()]
 
     analysis_file = EVAL_DIR / "failure_analysis.md"  # written by hand, so a new run must not erase it
     if analysis_file.exists():

@@ -58,7 +58,7 @@ Other things found:
 
 ## What I'd change for production
 
-- **Add a re-ranker.** A cross-encoder over the top 20 chunks would pick the best 3 instead of 5. That means shorter context, faster answers and a lower token cost, which is the first thing I'd try for the latency target.
+- **Use the re-ranker properly.** I built an optional cross-encoder (`RETRIEVER_MODE=rerank`) that re-scores the top 20 chunks and keeps the best 5. Its before/after numbers are in `eval/rerank_report.md`. Next step: try keeping only the best 3 chunks, which means shorter context, fewer tokens and a faster answer, then check that correctness does not drop.
 - **Faster models for small jobs.** Use a small, quick model for the router, the rewrite and the fact-check, and keep the bigger model for the answer. Add provider failover and retries for rate limits, or a paid tier.
 - **Real login.** Replace the sidebar dropdown with company sign-in (SSO). The employee ID must come from the verified identity on the server side. Read leave balances from the real HRMS through a limited API, with an audit log of every lookup.
 - **Privacy of employee data.** Mask or remove personal data before it reaches the LLM or traces. Our own logs already mask IDs and store no question text, but LangSmith traces still contain the real ID. Decide what may leave the company, how long logs are kept, and check the rules that apply (for example India's data-protection law) with legal and compliance.

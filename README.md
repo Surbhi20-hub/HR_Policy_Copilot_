@@ -42,8 +42,8 @@ data/policies/        6 HR policies (5 Markdown files and 1 PDF)
 data/hrms_mock.json   mock leave balances for the tool
 src/                  config, ingest, retriever, rag_chain, graph, tools, schemas, logging helpers
 app/                  streamlit_app.py (the chat UI)
-eval/                 golden_qa.json (40 questions), run_eval.py, report.md, failure_analysis.md
-tests/                85 unit tests (most need no key or internet)
+eval/                 golden_qa.json (40 questions), run_eval.py, compare_rerank.py, report.md, failure_analysis.md
+tests/                91 unit tests (most need no key or internet)
 docs/                 architecture.md, LEARNINGS.md
 ```
 
@@ -107,6 +107,8 @@ Run every command from the project root with the virtual environment active.
 | Compare vector, BM25 and hybrid search | `python -m src.retriever` |
 | **Evaluation** (hybrid search) | `python eval/run_eval.py --retriever hybrid` |
 | Evaluation (vector only, for the comparison) | `python eval/run_eval.py --retriever vector` |
+| **Re-ranker comparison** (hybrid vs hybrid + re-ranker, no LLM, no tokens) | `python eval/compare_rerank.py` |
+| Evaluation with the re-ranker (uses Groq tokens) | `python eval/run_eval.py --retriever rerank` |
 | **Tests** | `pytest` |
 | Tests without the ones that call the real LLM | `pytest -m "not llm"` |
 
@@ -168,6 +170,17 @@ First full evaluation run (40 questions: 30 answerable, 10 that must be refused)
 - Correctness and refusal targets are met. The latency target is **not** met (see `docs/LEARNINGS.md`).
 - After the first run I made small prompt changes. Results after the change: **TODO** (fill in from `eval/report.md` once the re-run is complete).
 - The full list of failed questions and the analysis of 5 failure cases are in `eval/report.md` and `eval/failure_analysis.md`.
+
+## Stretch feature: cross-encoder re-ranker (optional)
+
+Normal search (BM25 + vector) is fast but it compares the question and a chunk only "from a distance". A **cross-encoder** reads the question and one chunk **together** and gives a more careful score. With the re-ranker on, hybrid search first fetches 20 candidate chunks, the cross-encoder (`BAAI/bge-reranker-base`, free, runs on your computer, about 1 GB downloaded once) re-orders them, and the best 5 go to the LLM.
+
+- **It is OFF by default**, so nothing else changes. Turn it on by adding one line to `.env` and restarting the app: `RETRIEVER_MODE=rerank`. Remove the line to turn it off. To use another re-ranker model add `RERANKER_MODEL=<name>`.
+- **Compare before and after (no LLM, no tokens):** `python eval/compare_rerank.py`. It prints hit-rate@1, @3, @5, MRR and search time for both methods, and writes `eval/rerank_report.md` (added to `eval/report.md` the next time the report is built).
+- Answer quality with the re-ranker is a separate (token-using) check: `python eval/run_eval.py --retriever rerank`.
+- Cost: Rs 0. Trade-off: a slower search (the cross-encoder runs 20 times per question on your CPU) and the first start downloads the model. Chunks are long (up to 2400 characters), and the model reads about 512 tokens, so a very long chunk is cut when scored.
+
+Results: **TODO** (paste the table from `eval/rerank_report.md` after running the comparison).
 
 ## Known limits
 

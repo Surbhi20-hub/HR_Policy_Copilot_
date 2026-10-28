@@ -11,7 +11,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda
 
 from src.config import get_llm
-from src.retriever import TOP_K, get_hybrid_retriever, get_vector_retriever, print_docs
+from src.retriever import (
+    TOP_K, get_hybrid_retriever, get_reranked_retriever, get_vector_retriever, print_docs,
+)
 from src.schemas import PolicyAnswer
 
 SYSTEM_PROMPT = """You are the HR Policy Copilot of a company. You answer employee questions \
@@ -85,7 +87,7 @@ def build_rag_chain(extra_rules: str = "", retriever_mode: str = "hybrid") -> Ru
 
     extra_rules is added after the normal rules (the graph uses it for strict mode and for
     sensitive questions). It must not contain curly braces.
-    retriever_mode is 'hybrid' (default) or 'vector' (used by the eval to compare the two).
+    retriever_mode is 'hybrid' (default), 'vector' or 'rerank' (hybrid + cross-encoder re-ranker).
     """
     prompt = ChatPromptTemplate.from_messages(
         [("system", SYSTEM_PROMPT + extra_rules), ("human", HUMAN_PROMPT)]
@@ -100,7 +102,10 @@ def build_rag_chain(extra_rules: str = "", retriever_mode: str = "hybrid") -> Ru
         | prompt
         | llm
     )
-    retriever = get_vector_retriever(k=TOP_K) if retriever_mode == "vector" else get_hybrid_retriever(k=TOP_K)
+    makers = {"hybrid": get_hybrid_retriever, "vector": get_vector_retriever, "rerank": get_reranked_retriever}
+    if retriever_mode not in makers:
+        raise ValueError("retriever_mode must be 'hybrid', 'vector' or 'rerank'")
+    retriever = makers[retriever_mode](k=TOP_K)
 
     def retrieve(question: str) -> dict:
         """Step 1: find the chunks and time it."""

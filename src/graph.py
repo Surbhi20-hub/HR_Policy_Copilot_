@@ -248,18 +248,22 @@ def _rewrite_llm() -> Any:
     return get_llm().with_structured_output(RewrittenQuestion).with_retry(stop_after_attempt=3)
 
 
-RETRIEVER_MODE = "hybrid"  # 'hybrid' (normal) or 'vector' (only the eval changes this)
+RETRIEVER_MODES = ("hybrid", "vector", "rerank")
+# 'hybrid' is the normal default. Put RETRIEVER_MODE=rerank in .env to turn on the re-ranker.
+RETRIEVER_MODE = os.getenv("RETRIEVER_MODE", "hybrid").strip().lower()
+if RETRIEVER_MODE not in RETRIEVER_MODES:
+    RETRIEVER_MODE = "hybrid"
 
 
-def set_retriever_mode(mode: Literal["hybrid", "vector"]) -> None:
-    """Choose how chunks are found. The eval uses this to compare vector with hybrid."""
+def set_retriever_mode(mode: Literal["hybrid", "vector", "rerank"]) -> None:
+    """Choose how chunks are found. The eval uses this to compare the modes."""
     global RETRIEVER_MODE
-    if mode not in ("hybrid", "vector"):
-        raise ValueError("mode must be 'hybrid' or 'vector'")
+    if mode not in RETRIEVER_MODES:
+        raise ValueError("mode must be 'hybrid', 'vector' or 'rerank'")
     RETRIEVER_MODE = mode
 
 
-@lru_cache(maxsize=6)
+@lru_cache(maxsize=9)
 def _build_chain(kind: str, mode: str) -> Any:
     """Build each (kind, retriever mode) chain once. 'strict' and 'sensitive' add extra rules."""
     extra = {"normal": "", "strict": STRICT_RULES, "sensitive": SENSITIVE_RULES}[kind]

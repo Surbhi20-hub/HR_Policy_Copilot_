@@ -3,9 +3,11 @@
 Run a side-by-side demo from the project root:  python -m src.retriever
 """
 import json
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Callable, Sequence
 
 from langchain_chroma import Chroma
 from langchain_community.retrievers import BM25Retriever
@@ -25,6 +27,8 @@ from src.ingest import CHUNKS_FILENAME
 TOP_K = 5
 BM25_WEIGHT = 0.5
 VECTOR_WEIGHT = 0.5
+RERANK_FETCH_K = 20  # the re-ranker looks at this many candidates, then keeps TOP_K
+DEFAULT_RERANKER = "BAAI/bge-reranker-base"  # free, runs on your computer (about 1 GB download once)
 GOLDEN_FILE = ROOT_DIR / "eval" / "golden_qa.json"
 DEMO_QUESTION_IDS = [1, 3, 5, 8, 10, 12]  # 5 answerable questions and 1 unanswerable
 
@@ -85,6 +89,47 @@ def get_hybrid_retriever(
     )
     # The mix can hold up to 2*k chunks, so cut it back to k.
     return ensemble | RunnableLambda(lambda docs: docs[:k])
+
+
+@lru_cache(maxsize=1)
+def _load_reranker():
+    """Load the cross-encoder once (the first call downloads it). Set RERANKER_MODEL in .env to change it."""
+    from sentence_transformers import CrossEncoder  # imported here so normal runs do not load it
+
+    return CrossEncoder(os.getenv("RERANKER_MODEL", DEFAULT_RERANKER), max_length=512)
+
+
+def rerank_docs(
+    question: str,
+    docs: list[Document],
+    scorer: Callable[[list[tuple[str, str]]], Sequence[float]],
+    k: int = TOP_K,
+) -> list[Document]:
+    """Score every (question, chunk) pair with the scorer and keep the k best, best first."""
+    if not docs:
+        return []
+    scores = scorer([(question, doc.page_content) for doc in docs])
+    ranked = sorted(zip(scores, docs), key=lambda pair: float(pair[0]), reverse=True)
+    return [doc for _, doc in ranked[:k]]
+
+
+def get_reranked_retriever(
+    k: int = TOP_K,
+    fetch_k: int = RERANK_FETCH_K,
+    scorer: Callable[[list[tuple[str, str]]], Sequence[float]] | None = None,
+) -> Runnable:
+    """Hybrid search for fetch_k chunks, then a cross-encoder re-orders them and keeps the best k.
+
+    scorer is only for tests (a fake scorer needs no model download).
+    """
+    wide = get_hybrid_retriever(k=fetch_k)
+
+    def run(question: str) -> list[Document]:
+        docs = wide.invoke(question)
+        score = scorer if scorer is not None else _load_reranker().predict
+        return rerank_docs(question, docs, score, k)
+
+    return RunnableLambda(run)
 
 
 def expected_rank(docs: list[Document], expected_source: str | None) -> int | None:
