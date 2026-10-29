@@ -1,19 +1,19 @@
 # Learnings
 
 Numbers below come from the first full evaluation run (40 questions: 30 answerable, 10 that must be refused), see `eval/report.md`.
-Results after my later prompt changes are marked **TODO** until that re-run is complete.
+After my later prompt changes I ran the evaluation again; those results are in the last column of the table and in `eval/failure_analysis.md`.
 The judge is an LLM, so scores can move by a question or two between runs (one question is about 3 points).
 
-| Metric | Hybrid | Vector only | Target |
-|---|---|---|---|
-| Answer correctness | 83.3% (25/30) | 80.0% (24/30) | 80% or more |
-| Refusal accuracy | 100% (10/10) | 90.0% (9/10) | 90% or more |
-| Faithfulness | 100% (26/26) | 96.2% (25/26) | - |
-| Retrieval hit-rate@5 | 100% (26/26) | 100% (26/26) | - |
-| Citation presence | 96.2% (25/26) | 100% (26/26) | - |
-| Average / p95 latency | 12.61 s / 22.70 s | 9.91 s / 18.00 s | under 8 s average |
-| Tokens per question | 2,769 | 2,691 | - |
-| Estimated cost per question | $0.00031 | $0.00029 | - (real cost Rs 0) |
+| Metric | Hybrid (first run) | Hybrid (after prompt change) | Vector only | Target |
+|---|---|---|---|---|
+| Answer correctness | 83.3% (25/30) | 80.0% (24/30) | 80.0% (24/30) | 80% or more |
+| Refusal accuracy | 100% (10/10) | 90.0% (9/10) | 90.0% (9/10) | 90% or more |
+| Faithfulness | 100% (26/26) | 92.3% (24/26) | 96.2% (25/26) | - |
+| Retrieval hit-rate@5 | 100% (26/26) | 100% (26/26) | 100% (26/26) | - |
+| Citation presence | 96.2% (25/26) | 96.2% (25/26) | 100% (26/26) | - |
+| Average / p95 latency | 12.61 s / 22.70 s | 10.99 s / 22.04 s | 9.91 s / 18.00 s | under 8 s average |
+| Tokens per question | 2,769 | 2,873 | 2,691 | - |
+| Estimated cost per question | $0.00031 | $0.00032 | $0.00029 | - (real cost Rs 0) |
 
 ## What worked
 
@@ -33,12 +33,12 @@ The judge is an LLM, so scores can move by a question or two between runs (one q
 - **The first question after start took about 95 s** (the embedding model loading). Loading it once at app start fixed it.
 - **Model names and providers change under you.** `llama-3.3-70b-versatile` returned 404 on my account, and a Gemini 2.5 model name was reported as "no longer available to new users". The Gemini connection also failed from my network (`WinError 10053` and read timeouts) even though a plain model-list request worked. Keeping the model name only in `.env` made these one-line fixes, which is the point of the provider switch.
 - **The LLM judge is not perfect.** In the vector run it called a correct answer "unfaithful" because the answer said "the policy does not specify whether Pune is metro". Two expected answers were also stricter than the question asked.
-- **Prompt changes are hard to prove.** After I changed the answer prompt to include conditions like "within 3 months", a partial re-run showed some new failures I did not expect. It could be noise or a side effect. Final after-fix numbers: **TODO**.
+- **Prompt changes are hard to prove.** After I changed the answer prompt to include conditions like "within 3 months", a partial re-run showed some new failures I did not expect. It could be noise or a side effect. Final numbers: correctness 80.0% and refusal 90.0%, so both targets pass but exactly on the line, and the change did not help overall (it fixed Q4, but Q5, Q17, Q18, Q32 and Q40 failed in both after-change runs). Lesson: one prompt edit can fix one question and break others, so every prompt change needs a full re-run and a before/after comparison, and I should have kept a copy of the old prompt to revert.
 - **Streamlit's file watcher** printed hundreds of `torchvision` messages with `transformers`. It was harmless, and one setting (`fileWatcherType = "none"`) fixed it.
 
 ## Biggest failure modes found in eval
 
-The five questions that failed with hybrid search (the same five also failed with vector search), with my reading of each cause:
+The five questions that failed in the first hybrid run (BEFORE the prompt change), with my reading of each cause. Their results after the change are in the last bullet of this section:
 
 | Question | What happened | Cause |
 |---|---|---|
@@ -54,11 +54,11 @@ Other things found:
 - **Latency outliers and rate limits** (above).
 - **Run-to-run noise.** A question can pass in one run and fail in the next, so a single run is weak evidence for small changes.
 - **Policy gaps, not bugs.** The policies never list which cities are "metro", give no hotel limit for non-metro cities, and do not define "Director and above". Questions that depend on these can only be half-answered.
-- **After-fix results for the five cases:** **TODO** (fill in from `eval/report.md` after the re-run).
+- **After-fix results for the five cases:** Q4 was fixed. Q2, Q23, Q26 and Q31 still fail. Q40 (bonus versus increment) went from a correct refusal to a wrong answer, which is the most important next fix because refusal sits exactly on its 90% target. Details in `eval/failure_analysis.md`.
 
 ## What I'd change for production
 
-- **Use the re-ranker properly.** I built an optional cross-encoder (`RETRIEVER_MODE=rerank`) that re-scores the top 20 chunks and keeps the best 5. Its before/after numbers are in `eval/rerank_report.md`. Next step: try keeping only the best 3 chunks, which means shorter context, fewer tokens and a faster answer, then check that correctness does not drop.
+- **The re-ranker I tried did not help.** The optional cross-encoder (`RETRIEVER_MODE=rerank`) raised hit-rate@1 from 76.9% to 80.8% (one question) but lowered hit-rate@5 from 100% to 92.3% (two questions lost) and made search about 66 times slower (105 ms to 6,970 ms). Details are in `eval/rerank_report.md`. I would not use it as built. Things to try: split chunks smaller so they fit the model's 512-token limit, a different re-ranker model, or re-ranking only when hybrid scores are close. I measured retrieval only, not answer quality.
 - **Faster models for small jobs.** Use a small, quick model for the router, the rewrite and the fact-check, and keep the bigger model for the answer. Add provider failover and retries for rate limits, or a paid tier.
 - **Real login.** Replace the sidebar dropdown with company sign-in (SSO). The employee ID must come from the verified identity on the server side. Read leave balances from the real HRMS through a limited API, with an audit log of every lookup.
 - **Privacy of employee data.** Mask or remove personal data before it reaches the LLM or traces. Our own logs already mask IDs and store no question text, but LangSmith traces still contain the real ID. Decide what may leave the company, how long logs are kept, and check the rules that apply (for example India's data-protection law) with legal and compliance.

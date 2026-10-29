@@ -168,7 +168,7 @@ First full evaluation run (40 questions: 30 answerable, 10 that must be refused)
 | Estimated cost per question | - | $0.00031 | $0.00029 |
 
 - Correctness and refusal targets are met. The latency target is **not** met (see `docs/LEARNINGS.md`).
-- After the first run I made small prompt changes. Results after the change: **TODO** (fill in from `eval/report.md` once the re-run is complete).
+- After the first run I made three small prompt changes. Results after the change (full run, same judge): correctness **80.0% (24/30)**, refusal **90.0% (9/10)**, faithfulness 92.3% (24/26), hit-rate@5 100%, average latency 10.99 s. Both Must targets are met, but only exactly on the line, and the change did **not** improve the results overall (before: 83.3% / 100% / 100%). The analysis is in `eval/failure_analysis.md`.
 - The full list of failed questions and the analysis of 5 failure cases are in `eval/report.md` and `eval/failure_analysis.md`.
 
 ## Stretch feature: cross-encoder re-ranker (optional)
@@ -180,7 +180,17 @@ Normal search (BM25 + vector) is fast but it compares the question and a chunk o
 - Answer quality with the re-ranker is a separate (token-using) check: `python eval/run_eval.py --retriever rerank`.
 - Cost: Rs 0. Trade-off: a slower search (the cross-encoder runs 20 times per question on your CPU) and the first start downloads the model. Chunks are long (up to 2400 characters), and the model reads about 512 tokens, so a very long chunk is cut when scored.
 
-Results: **TODO** (paste the table from `eval/rerank_report.md` after running the comparison).
+Results (26 questions with a right section, run on 2026-10-28):
+
+| Metric | Hybrid (before) | Hybrid + re-ranker (after) |
+|---|---|---|
+| Hit-rate@1 | 76.9% (20/26) | 80.8% (21/26) |
+| Hit-rate@3 | 100% (26/26) | 92.3% (24/26) |
+| Hit-rate@5 | 100% (26/26) | 92.3% (24/26) |
+| Mean reciprocal rank | 0.872 | 0.859 |
+| Search time per question | 105 ms | 6,970 ms |
+
+**Verdict: it did not help, so it stays off by default.** One more question has the right section first, but two questions lost the right section from the top 5, and search became about 66 times slower (about 7 seconds on my CPU), which hurts the latency target. My guess (not tested): the model reads only the first 512 tokens and many chunks are longer, and `bge-reranker-base` is a general model that was not trained on HR policies. Answer quality with the re-ranker was not measured.
 
 ## Known limits
 
