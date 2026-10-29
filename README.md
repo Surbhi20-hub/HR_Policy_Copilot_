@@ -135,7 +135,7 @@ GROQ_API_KEY=your-groq-key
 **Google Gemini (free tier)**
 ```env
 LLM_PROVIDER=google_genai
-LLM_MODEL=gemini-flash-latest
+LLM_MODEL=gemini-flash-lite-latest
 GOOGLE_API_KEY=your-google-key
 ```
 
@@ -148,7 +148,7 @@ Steps:
 Proof that no code changes: after the switch, `git diff --stat -- "*.py"` prints nothing.
 Other LangChain providers (`openai`, `ollama`, ...) work the same way with their own key and model name.
 
-> **Status of this check:** Groq is tested end to end. Gemini: TODO (fill in after the provider-switch test: the model name used and the date).
+> **Status of this check:** tested end to end with both providers on 2026-10-29: Groq (`openai/gpt-oss-20b`) and Gemini (`gemini-flash-lite-latest`). The same 3 questions (a cited policy answer, a leave balance through the tool, and a refusal for something the policy does not cover) gave the same kind of answers with both. The sidebar showed the active model each time, and `git diff --stat -- "*.py"` printed nothing after the switch. The full evaluation was run with Groq only.
 > Model names get retired by providers (a Gemini 2.5 name returned "no longer available" during this project), so check the current free model name in Google AI Studio and put it in `.env`.
 
 ## Results
