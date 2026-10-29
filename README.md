@@ -42,8 +42,9 @@ data/policies/        6 HR policies (5 Markdown files and 1 PDF)
 data/hrms_mock.json   mock leave balances for the tool
 src/                  config, ingest, retriever, rag_chain, graph, tools, schemas, logging helpers
 app/                  streamlit_app.py (the chat UI)
+assets/               favicon.png and chat avatars (made by src/make_favicon.py)
 eval/                 golden_qa.json (40 questions), run_eval.py, compare_rerank.py, report.md, failure_analysis.md
-tests/                92 unit tests (most need no key or internet)
+tests/                93 unit tests (most need no key or internet)
 docs/                 architecture.md, LEARNINGS.md
 ```
 
@@ -112,7 +113,7 @@ Run every command from the project root with the virtual environment active.
 | **Tests** | `pytest` |
 | Tests without the ones that call the real LLM | `pytest -m "not llm"` |
 
-**The app:** pick a user in the sidebar (the IDs come from `data/hrms_mock.json`), ask a question, and open **Sources** under an answer to see the document, section and quote. The sidebar shows the active model, and every answer has thumbs up/down (saved in `feedback.jsonl`). **New chat** starts a fresh memory.
+**The app:** pick a user in the sidebar (the IDs come from `data/hrms_mock.json`), ask a question, and open **Sources** under an answer to see the document, section and quote. The sidebar shows the active model, and every answer has thumbs up/down (saved in `feedback.jsonl`). **New chat** starts a fresh memory. The app uses Streamlit's own default colours: light or dark mode is chosen in the three-dot menu (Settings). `toolbarMode = "viewer"` in `.streamlit/config.toml` removes Rerun, Clear cache and Deploy, and one small CSS block in the app hides the Stop button and the footer text (Streamlit has no setting for those). The tab icon and the two chat avatars are small PNG files in `assets/`, made by `python -m src.make_favicon`.
 
 **The evaluation:**
 - It runs the 40 questions in `eval/golden_qa.json` through the copilot and scores them with an LLM judge (correctness, faithfulness, refusal accuracy), plus retrieval hit-rate@5, citation presence, latency, tokens and an **estimated** cost.
@@ -206,5 +207,5 @@ Results (26 questions with a right section, run on 2026-10-28):
 | `429 ... tokens per day (TPD)` from Groq | The free daily budget is used up. Wait (the window rolls over 24 hours). Evaluation runs resume where they stopped. |
 | `model ... not found` (404) | The model name was retired. Pick a current one and change only `LLM_MODEL` in `.env`. |
 | First question after starting is slow | The embedding model is loading. The app loads it once at start. |
-| Streamlit prints many `torchvision` or `transformers` messages | Harmless. Create `.streamlit/config.toml` with `[server]` and `fileWatcherType = "none"`. |
+| Streamlit prints many `torchvision` or `transformers` messages | Harmless. Keep `fileWatcherType = "none"` under `[server]` in `.streamlit/config.toml`. |
 | `python check_setup.py` shows `[FAIL]` | Read the message next to it. It says which key or package is missing. |

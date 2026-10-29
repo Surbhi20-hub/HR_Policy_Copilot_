@@ -1,2 +1,11 @@
-   [server]
-   fileWatcherType = "none"
+[server]
+# Stops Streamlit from scanning every library file (it printed hundreds of torchvision messages).
+fileWatcherType = "none"
+
+[client]
+# "viewer" hides the developer options (Rerun, Clear cache, Deploy) from the toolbar and the menu.
+# Light and dark mode stay in the three-dot menu under Settings.
+toolbarMode = "viewer"
+
+[browser]
+gatherUsageStats = false
