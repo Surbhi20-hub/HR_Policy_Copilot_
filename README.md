@@ -43,7 +43,7 @@ data/hrms_mock.json   mock leave balances for the tool
 src/                  config, ingest, retriever, rag_chain, graph, tools, schemas, logging helpers
 app/                  streamlit_app.py (the chat UI)
 eval/                 golden_qa.json (40 questions), run_eval.py, compare_rerank.py, report.md, failure_analysis.md
-tests/                91 unit tests (most need no key or internet)
+tests/                92 unit tests (most need no key or internet)
 docs/                 architecture.md, LEARNINGS.md
 ```
 

@@ -204,6 +204,19 @@ def test_rewrite_runs_only_on_the_policy_route(fakes) -> None:
     assert fakes.rewrite_calls == []
 
 
+def test_a_failing_rewrite_does_not_stop_the_answer(fakes, monkeypatch) -> None:
+    """If the rewrite step crashes (for example the model skips the tool call), use the original question."""
+    def broken_rewrite(question: str, history: str) -> str:
+        raise RuntimeError("tool_use_failed")
+
+    thread = new_thread()
+    graph.run_query("How many casual leaves do I get?", "E1001", thread)  # builds some history
+    monkeypatch.setattr(graph, "_rewrite", broken_rewrite)
+    result = graph.run_query("What is the notice period for resignation?", "E1001", thread)
+    assert result["answer"]
+    assert fakes.chain_questions[-1] == "What is the notice period for resignation?"
+
+
 def test_a_different_thread_has_its_own_memory(fakes) -> None:
     graph.run_query("What is the work from home rule?", "E1001", new_thread())
     graph.run_query("and for interns?", "E1001", new_thread())  # a new chat: no history

@@ -355,7 +355,11 @@ def rewrite_question_node(state: GraphState) -> dict:
     history = chat_history(state)
     if not history:  # first message of the chat: nothing to fill in, so skip the LLM call
         return {"rewritten_question": question}
-    rewritten = _rewrite(question, history_to_text(history)).strip()
+    try:
+        rewritten = _rewrite(question, history_to_text(history)).strip()
+    except Exception as error:  # noqa: BLE001 - the rewrite only helps; never let it stop the answer
+        logger.warning("rewrite failed (%s); using the original question", type(error).__name__)
+        return {"rewritten_question": question}
     return {"rewritten_question": rewritten or question}
 
 
