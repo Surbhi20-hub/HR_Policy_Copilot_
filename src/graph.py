@@ -3,6 +3,8 @@
 START -> router -> (policy | personal | sensitive | out_of_scope) -> END
 The policy path first rewrites follow-up questions (rewrite_question), then searches, then has a
 safety check (grounding_check) that may retry once.
+With AGENT_MODE=true in .env, "policy" and "personal" questions go to the ReAct agent (src/agent.py)
+instead of policy_rag and tool. The grounding check, the retry and the fallback stay the same.
 
 Try it from the project root:  python -m src.graph
 (it also saves the picture of the graph to docs/architecture.md)
@@ -23,6 +25,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
+from src.agent import agent_mode_on, run_agent
 from src.config import ROOT_DIR, get_llm
 from src.logging_utils import get_logger, setup_logging
 from src.query_log import append_query_log, estimate_cost, mask_employee_id
@@ -143,6 +146,7 @@ class GraphState(TypedDict, total=False):
     escalate_to_hr: bool
     unsupported_claims: list[str]
     timings: dict[str, float]  # seconds spent per node
+    tools_called: list[str]  # agent mode only: the tools the agent used, in order
 
 
 # ---------------------------------------------------------------- small helpers
@@ -302,6 +306,11 @@ def _run_chain(kind: Literal["normal", "strict", "sensitive"], question: str) ->
     return _chain(kind).invoke(question)
 
 
+def _run_agent(question: str, employee_id: str, strict: bool) -> dict:
+    """Ask the ReAct agent. Returns {'docs', 'answer': PolicyAnswer, 'tools_called', ...}."""
+    return run_agent(question, employee_id, strict)
+
+
 def _check_grounding(question: str, answer: str, context: str) -> GroundingResult:
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -397,6 +406,16 @@ def grounding_check_node(state: GraphState) -> dict:
     }
 
 
+@timed("agent")
+def agent_node(state: GraphState) -> dict:
+    """Agent mode: the ReAct agent answers a policy or personal question (stricter on the retry)."""
+    strict = state.get("retry_count", 0) >= 1
+    result = _run_agent(question_for_search(state), state.get("employee_id", ""), strict)
+    update = _policy_update(result)
+    update["tools_called"] = result.get("tools_called", [])
+    return update
+
+
 @timed("tool")
 def tool_node(state: GraphState) -> dict:
     """Look up the employee's leave balance. The ID comes from state, never from the question."""
@@ -450,14 +469,36 @@ def route_after_grounding(state: GraphState) -> str:
     return "done"
 
 
-def build_graph() -> Any:
-    """Connect the nodes and compile with a MemorySaver (chat memory per thread_id)."""
+_agent_mode_override: bool | None = None  # set by set_agent_mode (the eval compare script uses it)
+
+
+def set_agent_mode(enabled: bool | None) -> None:
+    """Force agent mode on or off. None goes back to AGENT_MODE from .env. Rebuilds the graph."""
+    global _agent_mode_override
+    _agent_mode_override = enabled
+    get_app.cache_clear()
+
+
+def build_graph(agent_mode: bool | None = None) -> Any:
+    """Connect the nodes and compile with a MemorySaver (chat memory per thread_id).
+
+    agent_mode=None means: use AGENT_MODE from .env (default false = the normal graph).
+    """
+    if agent_mode is None:
+        agent_mode = _agent_mode_override if _agent_mode_override is not None else agent_mode_on()
+
     builder = StateGraph(GraphState)
     builder.add_node("router", router_node)
     builder.add_node("rewrite_question", rewrite_question_node)
-    builder.add_node("policy_rag", policy_rag_node)
+    if agent_mode:
+        builder.add_node("agent", agent_node)
+        answer_node, personal_node = "agent", "agent"
+    else:
+        builder.add_node("policy_rag", policy_rag_node)
+        answer_node, personal_node = "policy_rag", "tool"
     builder.add_node("grounding_check", grounding_check_node)
-    builder.add_node("tool", tool_node)
+    if not agent_mode:
+        builder.add_node("tool", tool_node)
     builder.add_node("sensitive", sensitive_node)
     builder.add_node("out_of_scope", out_of_scope_node)
 
@@ -465,15 +506,16 @@ def build_graph() -> Any:
     builder.add_conditional_edges(
         "router",
         route_after_router,
-        {"policy": "rewrite_question", "personal": "tool", "sensitive": "sensitive",
+        {"policy": "rewrite_question", "personal": personal_node, "sensitive": "sensitive",
          "out_of_scope": "out_of_scope"},
     )
-    builder.add_edge("rewrite_question", "policy_rag")
-    builder.add_edge("policy_rag", "grounding_check")
+    builder.add_edge("rewrite_question", answer_node)
+    builder.add_edge(answer_node, "grounding_check")
     builder.add_conditional_edges(
-        "grounding_check", route_after_grounding, {"retry": "policy_rag", "done": END}
+        "grounding_check", route_after_grounding, {"retry": answer_node, "done": END}
     )
-    for last_node in ("tool", "sensitive", "out_of_scope"):
+    last_nodes = ("sensitive", "out_of_scope") if agent_mode else ("tool", "sensitive", "out_of_scope")
+    for last_node in last_nodes:
         builder.add_edge(last_node, END)
     return builder.compile(checkpointer=MemorySaver())
 
@@ -492,6 +534,10 @@ def warm_up() -> None:
     get_app()
     for kind in ("normal", "strict", "sensitive"):
         _chain(kind)
+    if agent_mode_on():
+        from src.agent import _policy_retriever
+
+        _policy_retriever()
 
 
 # ---------------------------------------------------------------- the public function
@@ -533,6 +579,7 @@ def run_query(question: str, employee_id: str, thread_id: str, log: bool = True)
         "grounded": False,
         "citations": [],
         "unsupported_claims": [],
+        "tools_called": [],
     }
     config = {"configurable": {"thread_id": thread_id}}
     usage_context = get_usage_metadata_callback() if get_usage_metadata_callback else nullcontext()
@@ -554,6 +601,7 @@ def run_query(question: str, employee_id: str, thread_id: str, log: bool = True)
         "retrieved": _retrieved_info(final) if final["route"] in ("policy", "sensitive") else [],
         "latency": {"per_node": final.get("timings", {}), "total_seconds": total_seconds},
         "tokens": tokens,
+        "tools_called": final.get("tools_called", []),
     }
     if log:
         _log_query(question, employee_id, result, final.get("retry_count", 0))

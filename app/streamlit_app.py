@@ -23,6 +23,7 @@ from src.app_support import (  # noqa: E402
     new_thread_id,
     user_label,
 )
+from src.agent import mode_label
 from src.graph import HR_EMAIL, run_query, warm_up  # noqa: E402
 from src.logging_utils import setup_logging  # noqa: E402
 
@@ -107,6 +108,8 @@ def show_details(message: dict, index: int) -> None:
         for citation in message["citations"]:
             st.markdown(f"**{citation['source']}** - {citation['section']}")
             st.markdown(f"> {citation['quote']}")
+        if message.get("tools_called"):  # agent mode only
+            st.caption("Tools called: " + ", ".join(message["tools_called"]))
     st.caption(
         f"Route: {message['route']} | Confidence: {message['confidence']} | "
         f"Answered in {message['latency']:.1f} s"
@@ -149,6 +152,7 @@ def ask(question: str, employee_id: str) -> None:
         "citations": result["citations"],
         "escalate": result["escalate_to_hr"],
         "latency": result["latency"]["total_seconds"],
+        "tools_called": result.get("tools_called", []),
         "rating": None,
     }
     st.session_state.messages.append(answer)
@@ -172,6 +176,7 @@ def main() -> None:
             on_change=start_new_chat,  # a different person must not see the old chat
         )
         st.caption(f"LLM: {llm_label()}")
+        st.caption(f"Mode: {mode_label()}")
         st.button("New chat", on_click=start_new_chat)
         st.caption(f"Chat id: {st.session_state.thread_id}")
 

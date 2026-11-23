@@ -1,8 +1,8 @@
-"""Shared test setup: no test may write to the real logs/queries.jsonl."""
+"""Shared test setup: whatever is written in .env, the tests start in the normal (Standard) mode."""
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def no_query_log(monkeypatch) -> None:
-    """run_query() logs every query. Tests replace that with a do-nothing function."""
-    monkeypatch.setattr("src.graph.append_query_log", lambda record, *args, **kwargs: True)
+def default_modes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Standard mode, so an AGENT_MODE line in .env cannot change a test."""
+    monkeypatch.setenv("AGENT_MODE", "false")
